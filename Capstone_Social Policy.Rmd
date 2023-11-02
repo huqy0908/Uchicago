@@ -1,0 +1,415 @@
+---
+title: "Capstone_Social Policy"
+author: "Lorraine Hu"
+date: "2023-07"
+output:
+  html_document: default
+  pdf_document: default
+url_color: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Section 0: Import the datasets and load the libraries
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE}
+install.packages('tinytex')
+tinytex::install_tinytex()
+```
+
+```{r,message=FALSE, warning=FALSE}
+library(sf)
+library(tidyverse)
+library(tidycensus)
+library(haven)
+library(lubridate)
+library(dplyr)
+library(jsonlite)
+library(ggplot2)
+library(leaflet)
+library(caret)
+library(webshot2)
+
+raw_bill <- read_csv("bill.csv")
+raw_sales <- read_csv("sales.csv")
+geolocation <- read_csv("geolocation.csv")
+```
+
+## Section 1: Get to know the bill data
+
+1) 2) Obtain a brief overview and identify the shape of the dataset.
+```{r,message=FALSE, warning=FALSE}
+glimpse(raw_bill)
+dim(raw_bill)
+```
+
+3) Obtain a summary of the dataset.
+```{r,message=FALSE, warning=FALSE}
+summary(raw_bill)
+```
+**Conclusion:**
+
+**tax_bill_total**
+
+|statistics|value|
+|:--|:--|
+|Min.|0|
+|1st Qu.|1421|
+|Median|2827|
+|Mean|7320|
+|3rd Qu.|5296|
+|Max.|50209294|
+
+**av_mailed**
+
+|statistics|value|
+|:--|:--|
+|Min.|0|
+|1st Qu.|9059|
+|Median|15585|
+|Mean|41184|
+|3rd Qu.|28154|
+|Max.|309753179|
+
+4) Investigate data types and variable formats.
+```{r,message=FALSE, warning=FALSE}
+str(raw_bill)
+```
+
+Convert necessary columns to a different data type or format for analysis.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+raw_bill$year <- as.character(raw_bill$year)
+raw_bill$pin <- as.character(raw_bill$pin)
+raw_bill$class <- as.character(raw_bill$class)
+raw_bill$tax_code_num <- as.character(raw_bill$tax_code_num)
+```
+
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+class(raw_bill$year)
+class(raw_bill$pin)
+class(raw_bill$class)
+class(raw_bill$tax_code_num)
+```
+
+## Section 2: Get to know the bill data
+
+5) Check if the dataset has any missing values.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+raw_bill %>%
+  summarise_all(
+    ~ sum(is.na(.))
+  )
+```
+From the above outcome, we can see that the dataset has no missing values.
+
+6) Use Interquartile Range to exclude outliers in the column ‘tax_bill_total’ and get a new dataset called “bill”
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+bill <- raw_bill %>%
+  filter(tax_bill_total >= quantile(tax_bill_total,0.25)-1.5*(quantile(tax_bill_total,0.75)-quantile(tax_bill_total,0.25)) & tax_bill_total <= quantile(tax_bill_total,0.75)+1.5*(quantile(tax_bill_total,0.75)-quantile(tax_bill_total,0.25)))
+glimpse(bill)
+```
+
+## Section 3: Exploratory Data Analysis
+
+7) Explore how the distribution of “tax_bill_total” looks like by using a histogram.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+ggplot(bill, aes(x=tax_bill_total)) +
+  geom_histogram(colour="black", fill="white")
+```
+
+**tax_bill_total** follows a right-tailed distribution.
+
+8) What is the average 'tax_bill_total' for each 'year'? Is there any noticeable trend or pattern over time? Make a line plot.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+bill %>%
+  group_by(year) %>%
+  summarise(average = mean(tax_bill_total)) %>%
+  ggplot() +
+  geom_point(aes(x = year, y = average)) +
+  geom_line(aes(x = year, y = average, group = "")) 
+```
+
+**The average tax_bill_total** generally increased over time, and increased dramatically from 2014 to 2016. It is worth mentioning that from 2017 to 2018, the average tax_bill_total decreased a little, but it didn't matter much to the overall trend.
+
+9) Explore the relationship between 'class' and 'tax_bill_total' by finding an average tax bill for each class. Make a bar plot. Backed by your findings from the class documentation, what do you find from this plot?
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+bill %>%
+  group_by(class) %>%
+  summarise(average = mean(tax_bill_total)) %>%
+  ggplot(aes(x = class, y = average)) +
+  geom_bar(stat="identity") +
+  theme(panel.background=element_rect(fill='transparent',color ="gray"), 
+        axis.text.x = element_text(angle = 70, hjust = 0.5, vjust = 0.5,
+                                   color = "black",size=9))
+```
+
+We can find that **the average tax_bill_total** of *COMMERCIAL AND INDUSTRIAL ASSESSMENT CLASSES*(5xx) are generally greater than that of *RESIDENTIAL ASSESSMENT CLASSES*(2xx), and the *COMMERCIAL AND INDUSTRIAL ASSESSMENT CLASSES*(5xx) have a smaller variance of **the average tax_bill_total** than the *RESIDENTIAL ASSESSMENT CLASSES*(2xx), which means **the average tax_bill_total** are closer to each other in *COMMERCIAL AND INDUSTRIAL ASSESSMENT CLASSES*(5xx).
+
+Moreover, *the Regression Residential Classes* generally have a greater **average tax_bill_total** than *the Non-Regression Residential Classes*. And *the Commercial Classes* generally have a greater **average tax_bill_total** than *the Industrial Classes*.
+
+10a) Create a new column called "township_code" that takes the first two digits of the "tax_code_num".
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+town_bill <- bill %>%
+  mutate(township_code = str_sub(tax_code_num, 1, 2))
+glimpse(town_bill)
+typeof(town_bill$township_code)
+```
+
+10b) Referring to package dplyr, find out the average tax bill of every class in every township.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+town_bill %>%
+  group_by(township_code,class) %>%
+  summarise(average = mean(tax_bill_total))
+```
+
+10c) Sum the average tax bill for classes starting with 2 and classes starting with 5 within each township.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+town_bill %>%
+  group_by(township_code,class) %>%
+  summarise(average = mean(tax_bill_total)) %>%
+  mutate(class_start = str_sub(class, 1, 1)) %>%
+  group_by(township_code,class_start) %>%
+  summarise(sum = sum(average))
+```
+
+10d) Calculate the sum of residential and commercial properties for each township.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+property_summary <- town_bill %>%
+  mutate(class_start = str_sub(class, 1, 1)) %>%
+  mutate(property_type = ifelse(class_start == "2", "residential", "commercial")) %>%
+  group_by(township_code,property_type) %>%
+  summarise(number = n())
+property_summary
+```
+
+10e) Create a barplot for the tibble you found on part c. And create a barplot for the tibble you found on part d. Can you verify the anecdote?
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+town_bill %>%
+  group_by(township_code,class) %>%
+  summarise(average = mean(tax_bill_total)) %>%
+  mutate(class_start = str_sub(class, 1, 1)) %>%
+  group_by(township_code,class_start) %>%
+  summarise(sum = sum(average)) %>%
+  ggplot(aes(x = township_code, y = sum, fill = class_start)) +
+  geom_bar(stat="identity",position="dodge")
+ggplot(data = property_summary, mapping = aes(x = township_code, y = number, fill = property_type)) +
+  geom_bar(stat="identity",position="dodge")
+```
+
+We can generally verify the anecdote. From the two plots, we can see that the **commercial taxation** in township 14, 37, 70 and 72 are relatively fewer than that in township 73, 74, 76 and 77, which leads to a relatively higher **residential taxation** in the former four townships.
+
+10f) For this problem, you will utilize coordinates in actual chicago map to get a better visualization.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+geolocation$township_code <- as.character(geolocation$township_code)
+geo_property <- left_join(property_summary, geolocation, by = "township_code")%>%
+  mutate(sum_residential = ifelse(property_type == "residential", number, 0)) %>%
+  mutate(sum_commercial = ifelse(property_type == "commercial", number, 0))
+geo_property
+```
+
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+residential_map <- leaflet(data = geo_property) %>% 
+  addTiles() %>% 
+  addCircleMarkers(
+    lat = ~latitude,
+    lng = ~longitude,
+    label = ~paste("Township:", township, "<br>","Residential Properties:", sum_residential),
+    color = "blue",
+    radius = ~sqrt(sum_residential)/50)
+residential_map
+```
+
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+commercial_map <- leaflet(data = geo_property) %>% 
+  addTiles() %>% 
+  addCircleMarkers(
+    lat = ~latitude,
+    lng = ~longitude,
+    label = ~paste("Township:", township, "<br>","Commercial Properties:", sum_commercial),
+    color = "blue",
+    radius = ~sqrt(sum_commercial)/50)
+commercial_map
+```
+
+11) Lastly, this project would primarily rely on the variable 'av_mailed'. Explore the relationship between 'av_mailed' and 'tax_bill_total'.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+reg_model <- lm(tax_bill_total ~ av_mailed, data = bill)
+summary(reg_model)
+plot(reg_model)
+ggplot(bill, aes(x = tax_bill_total, y = av_mailed)) + geom_point()
+```
+
+From the plots above, we can see that **av_mailed** has no obvious relationship with **tax_bill_total** and stays in a relatively small range whatever the **tax_bill_total** is, except for some outliers.
+
+## Section 4: Data Engineering
+
+12) Check if there are any missing values in the sale_price column.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+raw_sales %>%
+  summarise(
+    sale_price_na = sum(is.na(sale_price))
+  )
+```
+Therefore, we can find that there is no missing values in the sale_price column.
+
+13) Use Interquartile Range to exclude outliers in the column ‘sale_price’ and get a new dataset called “sale”.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+summary(raw_sales)
+sale <- raw_sales %>%
+  filter(sale_price >= quantile(sale_price,0.25)-1.5*(quantile(sale_price,0.75)-quantile(sale_price,0.25)) & sale_price <= quantile(sale_price,0.75)+1.5*(quantile(sale_price,0.75)-quantile(sale_price,0.25)))
+glimpse(sale)
+```
+
+14) Merge the sale with the bill dataset, using pin and year.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+sale$pin <- as.character(sale$pin)
+sale$year <- as.character(sale$year)
+merged_data <- merge(sale, town_bill, by = c("pin", "year"), all = FALSE) %>%
+  select(-c(class.y, township_code.y))
+names(merged_data)[3] <- "township_code"
+names(merged_data)[5] <- "class"
+glimpse(merged_data)
+```
+This question gives the hint that the merged data should have the shape (322364, 16). However, my merged data have the shape(322366,16). I've asked for help on Ed but still can't figure it out and have no idea what's the problem is. Therefore, the TA asked me to continue with the rest questions. I'm so sorry for that!
+
+15) Create variables called "sale_ratio" using "av_mailed"/"sale_price", "effective_tax_rate" using "tax_bill_total"/"sale_price". Round 'sale_ratio' with 3 decimals, and multiply 'effective_tax_rate' by 100 to represent rate (skip percentage).
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+merged_data <- merged_data %>%
+  mutate(sale_ratio = round(av_mailed / sale_price, 3)) %>%
+  mutate(effective_tax_rate = tax_bill_total / sale_price * 100)
+glimpse(merged_data)
+```
+
+16) Make a scatter plot of sale_ratio against sale_price using geom_smooth(method="lm", se=FALSE)
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+merged_data %>%
+  ggplot(aes(x=sale_price, y=sale_ratio)) +
+  geom_point() +
+  geom_smooth(method="lm", se=FALSE)
+```
+
+The line in the plot is a quite flat line with a really small downward slope, which means the sale prices are basically a fair indication of market value and the assessments are basically fair and accurate. However, there is still evidence showing that less expensive homes are a little bit over-assessed compared to more expensive homes, showing a little regressivity (but not severe).
+
+17) Similarly, since assessed values are the basis on which taxes are calculated, meaning that inequities in assessments will be transmitted into inequities in tax rates. Make a scatter plot using geom_smooth(method="lm", se=FALSE) to see if the inequality holds.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+merged_data %>%
+  ggplot(aes(x=sale_price, y=effective_tax_rate)) +
+  geom_point() +
+  geom_smooth(method="lm", se=FALSE)
+```
+
+The line in the plot has a downward slope (much greater than the above), which means the sale prices are not quite a fair indication of the tax and the assessments are not so fair and accurate, which means there exists certain inequality in assessments that will be transmitted into inequities in tax rates.
+
+18) Convert categorical variables into dummy variables.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+merged_data <- merged_data %>%
+  mutate(class_dummy = ifelse(substr(class, 1, 1) == "2", 1, 0))
+merged_data$township_code <- as.character(merged_data$township_code)
+merged_data$township_code <- as.factor(merged_data$township_code)
+dummy_town <- dummyVars(~township_code, merged_data)
+merged_data_dummy <- predict(dummy_town, merged_data)
+merged_data_dummy <- data.frame(merged_data,merged_data_dummy)
+glimpse(merged_data_dummy)
+```
+
+## Section 5: Model Construction
+19a) Utilizing 'sale_ratio', 'class_dummy', the various 'township_code', and 'year' as regressors, and 'effective_tax_rate' as the response variable. Construct a multiple linear regression model.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+reg_model_multi <- lm(effective_tax_rate ~ sale_ratio + class_dummy + year + township_code.14 + township_code.37 + township_code.70 + township_code.72 + township_code.73 + township_code.74 + township_code.76 + township_code.77, data = merged_data_dummy)
+summary(reg_model_multi)
+```
+
+19b) State the null hypothesis. Choose a significance level, and according to p-value, do you have enough evidence to reject the null hypothesis based on your selected significance level?
+
+**The null hypothesis**: The correlation between the **effective_tax_rate** and **sale_ratio**, **class_dummy**, **various township_code**, **year** equals to 0.
+
+**Significance level**: 0.05
+
+**p-value**: < 2.2e-16
+
+**Conclusion**: p-value < 0.05. There is enough evidence to reject the null hypothesis.
+
+19c) Use "summary", explain what "Estimate" "Std. Error" "Pr(>|t|)" mean. Provide one example for each feature.
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+summary(reg_model_multi)
+```
+**Estimate**: Estimated values of the regression equation parameters, usually means the slope and the intercept
+
+**Std. Error**: Standard deviation of the regression parameters, an index representing the accuracy of the model and measuring the degree of variation of the dependent variable around the predicted value of the model. Small **Std. Error** means a high accuracy of the model.
+
+**Pr(>|t|)**: The p-value, an index used for the significance test. The smaller p-value is, the more significant the regression is.
+
+**Example**: 
+
+The **Estimate** of *sale_ratio* is 17.556344, which means the slope between *sale_ratio* and *effective_tax_rate*, that is: effective_tax_rate = 17.556344 * sale_ratio + Intercept(-0.597761).
+
+The **Std. Error** of *sale_ratio* is 0.022307, which is quite small, showing a relatively high accuracy of the relationship between *sale_ratio* and *effective_tax_rate*.
+
+The **Pr(>|t|)** of *sale_ratio* is < 2e-16, which is far smaller than 0.05, letting us reject the null hypothesis and proving that the regression parameters between *sale_ratio* and *effective_tax_rate* pass the significance test.
+
+19d) Note "Pr(>|t|)" has different symbols of " *** ", " ** ", " * ". Explain what those symbols mean. Provide one example for each symbol.
+
+***: Significance level equals to almost 0. 
+
+**: Significance level equals to 0.001.
+
+*: Significance level equals to 0.01.
+
+**Example**: 
+
+*sale_ratio* has the symbol of *** , and its p-value is < 2e-16 (Significance level equals to almost 0), which is so small that shows *sale_ratio* has a significant positive impact on *effective_tax_rate*.
+
+*township_code.72* has the symbol of ** , and its p-value is 0.00382 (Significance level equals to 0.001), which shows that *township_code.72* has a quite significant impact on *effective_tax_rate*.
+
+*year2013* has the symbol of * , and its p-value is 0.01075 (Significance level equals to 0.01), which is already near 0.05, and thus showing that *year2013* has a little impact on *effective_tax_rate*.
+
+19e) Interpret the results from sale_ratio, year, class_dummy, and various township_codes.
+
+While holding other variables constant, one unit of increase on the *sale_ratio* variable would bring 17.556344 units of increase on the *effective_tax_rate* variable.
+
+While holding other variables constant, one unit of increase on the *class_dummy* variable would bring 0.476704 units of increase on the *effective_tax_rate* variable.
+
+While holding other variables constant, one unit of increase on the *township_code.14* variable would bring 3.925648 units of increase on the *effective_tax_rate* variable.
+
+While holding other variables constant, one unit of increase on the *year2013* variable would bring 0.035952 units of increase on the *effective_tax_rate* variable.
+
+## Section 6: Conclusion
+
+20a) What interesting findings have you found out from the Exploratory Data Analysis section?
+
+Township *Lake* has the largest number of **residential properties** of 1517584, while township *Calumet* has the smallest number of **residential properties** of 53288. Township *West Chicago* has the largest number of **commercial properties** of 82348, while township *Calumet* has the smallest number of **commercial properties** of 3027. 
+
+Overall, we can see that township *Calumet* is a really small township with both the smallest number of **residential properties** and the smallest number of **commercial properties**. Townships in the east of Chicago generally have a greater number of properties than others.
+
+20b) What are the influential variables that affect effective_tax_rate? Based on the output from the above model, if you were a property holder, if you had to make a sale of your property, how would you choose to minimize the effective tax rate.
+
+*sale_ratio*, *class_dummy*, *year 2014*, *year 2016-2021*, *township_code.14/37/70/74* are the influential variables that affect *effective_tax_rate*, because their p-values are the smallest, which means the significance level equals to almost 0. 
+
+If I were a property holder and if I had to make a sale of my property, I would like to minimize the *sale_ratio* by controlling the assessed value and avoiding over-assess the property. Besides, I would like my property to be commercial, so that the *class_dummy* would be 0 which will lead to a lower *effective_tax_rate*. The tax rate would also be lower if the property is in township Hyde Park, because the estimate of township_code.70 is below 0, which means the slope between *township_code.70* and the *effective_tax_rate* is negative. On the other hand, if the property is in township Lake View or South Chicago, the *effective_tax_rate* would not be influenced much because the p-values are of the 0.1 level, which is greater than 0.05 and fail the significance test. Similarly, if the year is in 2015, the *effective_tax_rate* would not be influenced due to the high p-value. 
+
+20c) If you were to replicate the project, what improvements would you make?
+
+Since we have already found that in many cities, property taxes are inequitable: low-value properties face higher tax assessments, relative to their actual market values, than do high-value properties, we should pay more attention to the lower-income residents who are always burdened by the property tax. Therefore, I would like to further investigate the average family income in every township and figure out its relationship with the tax rate. I'd also like to confirm whether the property tax policies are exactly the same among different townships over time, which I believe is quite important for me to determine the possible factors for the difference of tax among townships.
+
+Moreover, I'd like to add more visualized outcomes to this project. Since most of the conclusions are presented in the form of table, readers may find it a little difficult to understand the outcomes. With more plots or maps with numbers as well as different colors or shapes, the outcome may be more understandable and acceptable.
+
+20d) What factors would you take into account or what policy would you propose if you were to modify the existing taxing system?
+
+One of the crucial aspects is how properties are valued. A fair and accurate property valuation method must be established to ensure that tax burdens are distributed equitably among property owners. I would also take the overall revenue requirements of the city into consideration to figure out how the property tax rates can be set to meet those needs without placing an undue burden on taxpayers.
+
+Commercial properties should also be paid enough attention, as they play a vital role in the city's economy. Therefore, striking a balance between supporting economic growth and maintaining a fair tax structure is essential. Besides, as I mentioned above, I would like to investigate the relationship between the average family income and the effective tax rate, and thus I will appropriately control the property tax under an acceptable level for those low-income families to relieve their burden. To solve this problem, I'd like to consider the effectiveness of existing property tax exemptions and relief programs which are aimed at assisting those vulnerable populations (low-income or elderly people). I would also evaluate the existing tax incentives aimed at attracting new businesses or encouraging development, because more commercial properties means less tax rate.
+
+## Section 7: Extra Credits
+21a) Run bivariate regression where "effective_tax_rate" is still the response variable. Is there any difference you found from the multiple linear regression model created above?
+```{r,message=FALSE, warning=FALSE, error=FALSE}
+reg_model_bi <- lm(effective_tax_rate ~ sale_ratio + class_dummy, data = merged_data_dummy)
+summary(reg_model_bi)
+```
+The **Estimate** and **Std. Error** of *sale_ratio* and *class_dummy* are both a little different from the above multiple linear regression model. However, the p-value doesn't change, which means the regression is still of great significance.
+
+
+
+
+
